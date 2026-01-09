@@ -33,6 +33,13 @@ class Point(ABC):
     def get_zone_type(self):
         return self.zone_type
 
+    def get_number_of_drones(self, drones: list):
+        result = 0
+        for i in range(len(drones)):
+            if drones[i].get_position() == self.get_position():
+                result += 1
+        return result
+
 class NormalPoint(Point):
     def __init__(self, name, x, y, max_drone, color = None, zone_type = "hub"):
         super().__init__(name, x, y, max_drone, color, zone_type)
@@ -74,22 +81,50 @@ class PriorityPoint(Point):
         return True
 
 class Connections:
-    def __init__(self, name: str, x: Point, y: Point, max_link_capacity: int = 1):
+    def __init__(self, x: Point, y: Point, max_link_capacity: int = 1):
         self.x = x
         self.y = y
         self.max_link_capacity = max_link_capacity
-        self.name = name
+
+    def get_points(self):
+        return self.x.get_position(), self.y.get_position()
+
+    def get_max_capacity(self):
+        return self.max_link_capacity
+
+    def get_destination(self, start: Point):
+        if self.x.get_position() == start.get_position():
+            return self.y
+        else:
+            return self.x
+
+    def get_cost(self, start : Point):
+        if self.x.get_position() == start.get_position():
+            return self.y.cost()
+        else:
+            return self.x.cost()
+
 
 class Drone:
     def __init__(self, id: int, position: Point):
         self.id = id
         self.position = position
 
-    def move(self, position: Point, direction: Connections):
-        self.position = direction.y
+    def move(self, direction: Connections):
+        if direction.get_points()[0] == self.get_position():
+            self.position = direction.y
+            cost = direction.y.cost()
+        else:
+            self.position = direction.x
+            cost = direction.x.cost()
+        return cost
+
 
     def print_position(self):
         print(f"position is x = {self.position.x}, y = {self.position.y}")
+
+    def get_position(self):
+        return self.position.get_position()
 
     def print_id(self):
         print(f" drone id is {self.id}")
@@ -137,69 +172,90 @@ def create_drones_and_zones(filename: str):
                     zones.append(NormalPoint(name, x, y, max_drones, color, "end_hub"))
     for i in range(nb_drones):
         drones.append(Drone(i + 1, zones[-2]))
+    del zones[:2]
     return drones, zones
 
+def create_connections(zones: list, input_file: str):
+    connections = []
+    with open(input_file, "r") as file:
+        content = file.read()
+        content = content.splitlines()
+        for line in content:
+            if line.startswith("connection:"):
+                new_line = line.split(' ')
+                zone_line = new_line[1].split('-')
+                start = zone_line[0]
+                end = zone_line[1]
+                max_capacity = 1
+                if len(new_line) > 2:
+                    max_capacity = int(new_line[2].split('=')[1].strip(']'))
+                chosen_zones = []
+                for point in zones:
+                    if point.get_name() == start or point.get_name() == end:
+                        chosen_zones.append(point)
+                connections.append(Connections(chosen_zones[0], chosen_zones[1], max_capacity))
 
-    #     for line in file:
-    #         if "nb_drones:" in line:
-    #             nb_drones = int(line.split(':')[1].strip())
-    #         elif "start_hub:" in line:
-    #             new_line = line.split(' ')
-    #             x = int(new_line[2].strip())
-    #             y = int(new_line[3].strip())
-    #             color = None
-    #             # print(len(new_line))
-    #             # print(new_line[4])
-    #             # print(new_line[4].split('=')[1].strip().strip(']'))
-    #             if len(new_line) > 4 and new_line[4].startswith("[color="):
-    #                 color = new_line[4].split('=')[1].strip().strip(']')
-    # start_hub = NormalPoint(x, y, nb_drones, color, "start_hub")
-    # for i in range(nb_drones):
-    #     drones.append(Drone(i + 1, start_hub))
-    # return drones, start_hub
+    return connections
 
-# def create_end(filename: str, nb_drones: int):
-#     with open(filename, "r") as file:
-#         for line in file:
-#             if "end_hub:" in line:
-#                 new_line = line.split(' ')
-#                 x = int(new_line[2].strip())
-#                 y = int(new_line[3].strip())
-#                 name = new_line[1]
-#                 color = None
-#                 if len(new_line) > 4 and new_line[4].startswith("[color="):
-#                     color = new_line[4].split('=')[1].strip().strip(']')
-#     end_hub = NormalPoint(x, y, nb_drones, color, name)
-#     return end_hub
+def find_zone_with_position(zones: list, position: tuple):
+    result = 0
+    for zone in zones:
+        if zone.get_position() == position:
+            return result
+        else:
+            result += 1
 
-# def create_hubs(filename: str):
-#     hubs = []
-#     with open(filename, "r") as file:
-#         for line in file:
-#             if "hub:" in line:
-#                 new_line = line.split(' ')
-#                 name = new_line[1]
-#                 x = int(new_line[2].strip())
-#                 y = int(new_line[3].strip())
-#                 color = None
-#                 if len(new_line) > 5 and new_line[5].startswith("color="):
-#                     color = new_line[4].split('=')[1].strip().strip(']')
-#                 zone_type = new_line[4].split('=')[1]
-#                 print(zone_type)
-#                 if zone_type == "restricted":
-#                     hubs.append(RestrictedPoint(x, y, ))
+def find_paths(zones: list, drones: list, connections: list):
+    cost = 0
+    finished = False
+    path = {}
+    paths = {}
+    start = zones[-2]
+    end = zones[-1]
+    current = start
+    id = 0
+    while finished == False:
+        for connection in connections:
+            if current.get_position() in connection.get_points():
+                path[id] = [connection.get_destination(current).get_position(), connection.get_cost(current)]
+                id += 1
+            for index in path:
+                if path[index][0] == end.get_position():
+                    finished = True
+                else:
+                    current = zones[find_zone_with_position(zones, path[index][0])]
+        finished = True
+    print(path)
+
+
+
 
 
 
 if __name__ == "__main__":
     drones, zones = create_drones_and_zones("input.txt")
-    for i in range(len(drones)):
-        drones[i].print_id()
-        drones[i].print_position()
-    for i in range(len(zones)):
-        print(zones[i].get_position())
-        print(zones[i].get_name())
-        print(zones[i].get_zone_type())
+    # for i in range(len(drones)):
+    #     drones[i].print_id()
+    #     drones[i].print_position()
+    # for i in range(len(zones)):
+    #     print(zones[i].get_position())
+    #     print(zones[i].get_name())
+    #     print(zones[i].get_zone_type())
+    connections = create_connections(zones, "input.txt")
+    # for i in range(len(connections)):
+    #     print(connections[i].get_points())
+    #     print(connections[i].get_max_capacity())
+    # print(zones[-2].get_number_of_drones(drones))
+    # print(drones[0].move(connections[0]))
+    # print(drones[0].move(connections[2]))
+    # print(drones[0].move(connections[3]))
+    # drones[0].print_position()
+    # print(zones[-2].get_number_of_drones(drones))
+    find_paths(zones, drones, connections)
+
+
+
+
 
 
 
